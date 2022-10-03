@@ -1,0 +1,192 @@
+---
+title: "Some_plots"
+author: "Simon Lacombe"
+date: "2022-09-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r get libraries and global variavles, message=FALSE, warning=FALSE}
+rm(list = ls())
+
+library(foreach)
+library(tidyverse)
+library(lubridate)
+library(stringi)
+library(zoo)
+library(depmixS4)
+library(ggplot2)
+library(mixR)
+library(corrplot)
+library(FactoMineR)
+library(factoextra)
+
+source("get_features.R")
+
+window = 60                                                                     # time window used to get static acceleration
+res_analysis = 5                                                                # resolution used for the analysis (HMM time step)      
+files <- 1:24
+```
+
+## LOAD DATA 
+
+24 hrs accelerometer time series from a boar. X Y Z acceleration are acquired with a frequency of 50 hz. 
+
+```{r load data}
+
+boar_dat.path <- "../datafile/acc_sanglier_33395"
+boar_dat.filenames <- list.files(path = boar_dat.path, pattern = ".rds")
+boar_dat.filenames <-boar_dat.filenames[files]
+
+boar_dat <- foreach(file = boar_dat.filenames, .combine = rbind) %do%{
+  readRDS(paste0(boar_dat.path,"/",file))
+}
+
+res_orig <- boar_dat$ms[nrow(boar_dat)]/(nrow(boar_dat)-1) / 1000               # original resolution (s)
+
+```
+
+## PROCESS DATA 
+
+```{r process data}
+dat_processed.l <- get_features(boar_dat,
+                                window = window,
+                                res_orig = res_orig,
+                                res_analysis = res_analysis )
+
+boar_dat <- dat_processed.l[[1]]
+boar_dat_seg <- dat_processed.l[[2]]
+
+```
+
+## SOME PLOTS 
+
+### 1. Original data
+
+```{r plot 1, eval=FALSE, include=FALSE}
+
+boar_dat%>%
+  pivot_longer(cols = c("Raw.x","Raw.y","Raw.z",
+                        "Static.x","Static.y","Static.z",
+                        "Dynamic.x", "Dynamic.y", "Dynamic.z"),
+               names_to = "VAR", values_to = "accl")%>%
+  mutate(dir = stri_sub(VAR, -1),
+         type = factor(stri_sub(VAR,0,-3), levels = c("Raw", "Static", "Dynamic")))%>%
+  ggplot()+
+  geom_line(aes(x=time, y =accl, color = dir))+
+  facet_grid(type~dir, scale = "free")+
+  ggtitle("Raw, Static and Dynamic acceleration")
+```
+
+```{r plot 2, eval=FALSE, include=FALSE}
+
+boar_dat%>%
+  pivot_longer(cols = c("ODBA", "VeDBA"),
+               names_to = "VAR", values_to = "accl")%>%
+  ggplot()+
+  geom_line(aes(x=time, y =accl, color = VAR))+
+  facet_grid(VAR~., scale = "free")+
+  ggtitle("ODBA, VeDBA")
+
+```
+
+### 2. Processed Data 
+
+A new resolution of 1min is used to calculate the summary features.
+
+```{r plot 3}
+
+boar_dat_seg%>%
+  pivot_longer(cols = c("Raw.x.mn","Raw.y.mn","Raw.z.mn",
+                        "Static.x.mn","Static.y.mn","Static.z.mn",
+                        "Dynamic.x.mn", "Dynamic.y.mn", "Dynamic.z.mn"),
+               names_to = "VAR", values_to = "accl")%>%
+  mutate(dir = stri_sub(VAR, -4,-4),
+         type = factor(stri_sub(VAR,0,-6), levels = c("Raw", "Static", "Dynamic")))%>%
+  ggplot()+
+  geom_line(aes(x=time, y = accl, color = dir))+
+  facet_grid(type~dir, scale = "free")+
+  ggtitle("Mean Raw, Static and Dynamic acceleration over 1min intervals")
+
+boar_dat_seg%>%
+  pivot_longer(cols = c("Raw.x.sd","Raw.y.sd","Raw.z.sd",
+                        "Static.x.sd","Static.y.sd","Static.z.sd",
+                        "Dynamic.x.sd", "Dynamic.y.sd", "Dynamic.z.sd"),
+               names_to = "VAR", values_to = "accl")%>%
+  mutate(dir = stri_sub(VAR, -4,-4),
+         type = factor(stri_sub(VAR,0,-6), levels = c("Raw", "Static", "Dynamic")))%>%
+  ggplot()+
+  geom_line(aes(x=time, y = accl, color = dir))+
+  facet_grid(type~dir, scale = "free")+
+  ggtitle("Sd Raw, Static and Dynamic acceleration over 1min intervals")
+```
+
+```{r plot 4}
+boar_dat_seg%>%
+  pivot_longer(cols = c("ODBA.mn", "VeDBA.mn"),
+               names_to = "VAR", values_to = "accl")%>%
+  ggplot()+
+  geom_line(aes(x=time, y =accl, color = VAR))+
+  facet_grid(VAR~., scale = "free")+
+  ggtitle("Mean ODBA and VeDBA")
+
+boar_dat_seg%>%
+  pivot_longer(cols = c("ODBA.sd", "VeDBA.sd"),
+               names_to = "VAR", values_to = "accl")%>%
+  ggplot()+
+  geom_line(aes(x=time, y =accl, color = VAR))+
+  facet_grid(VAR~., scale = "free")+
+  ggtitle("Sd ODBA and VeDBA")
+```
+
+```{r plot 5}
+boar_dat_seg%>%
+  pivot_longer(cols = c("Dps.x", "Dps.y", "Dps.z",
+                        "FDps.x", "FDps.y", "FDps.z"),
+               names_to = "VAR", values_to = "accl")%>%
+  mutate(dir = stri_sub(VAR, -1),
+         type = stri_sub(VAR,0,-3))%>%
+  ggplot()+
+  geom_line(aes(x=time, y =accl, color = dir))+
+  facet_grid(type~dir, scale = "free")+
+  ggtitle("Dominant power spectrum and associated frequency over 1min intervals")
+```
+
+## Check features correlations 
+
+```{r get correlations}
+
+boar_dat_seg[,4:ncol(boar_dat_seg)]%>%
+  cor%>%
+  corrplot::corrplot(method = "color", type = "upper")
+
+pca <- PCA(boar_dat_seg[,3:ncol(boar_dat_seg)], scale.unit = T)
+
+fviz_pca_ind(pca)
+
+var <- get_pca_var(pca)
+corrplot::corrplot(var$cos2, is.corr=FALSE)
+```
+
+## Fit mixture models 
+
+```{r mixture models}
+
+mix_mod_ODBA <- mixfit(boar_dat_seg$ODBA.mn, ncomp = 3, family = c("gamma"))
+plot(mix_mod_ODBA, theme = 'bw', breaks = 100)
+
+mix_mod_Dps <- mixfit(boar_dat_seg$Dps.x, ncomp = 3, family = c("gamma"))
+plot(mix_mod_Dps, theme = 'bw', breaks = 100)
+
+mix_mod_Dynamic <- mixfit(boar_dat_seg$Dynamic.x.mn, ncomp = 3, family = c("normal"))
+plot(mix_mod_Dynamic, theme = 'bw', breaks = 100)
+
+mix_mod_FDps <- mixfit(boar_dat_seg$FDps.x, ncomp = 3, family = c("normal"))
+plot(mix_mod_FDps, theme = 'bw', breaks = 100)
+
+```
+
